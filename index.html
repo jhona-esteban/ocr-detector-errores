@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR Detector de Errores</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0f0f1a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-bottom: 2px solid #0f3460;
+            padding: 1.5rem 2rem;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 1.8rem;
+            background: linear-gradient(90deg, #4fc3f7, #81c784);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.3rem;
+        }
+
+        .header p {
+            color: #8892b0;
+            font-size: 0.95rem;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        /* Upload Zone */
+        .upload-zone {
+            border: 2px dashed #3a3a5c;
+            border-radius: 16px;
+            padding: 3rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #1a1a2e;
+            position: relative;
+        }
+
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #4fc3f7;
+            background: #1e2a3a;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(79, 195, 247, 0.1);
+        }
+
+        .upload-zone input[type="file"] {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .upload-icon {
+            font-size: 3.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .upload-zone h2 {
+            font-size: 1.3rem;
+            color: #ccd6f6;
+            margin-bottom: 0.5rem;
+        }
+
+        .upload-zone p {
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+
+        /* Language selector */
+        .options-bar {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .options-bar label {
+            color: #8892b0;
+            font-size: 0.9rem;
+        }
+
+        .options-bar select {
+            background: #16213e;
+            color: #ccd6f6;
+            border: 1px solid #3a3a5c;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        /* Preview */
+        .preview-section {
+            display: none;
+            margin-top: 2rem;
+        }
+
+        .preview-section.active { display: block; }
+
+        .preview-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-top: 1rem;
+        }
+
+        @media (max-width: 700px) {
+            .preview-container { grid-template-columns: 1fr; }
+        }
+
+        .panel {
+            background: #1a1a2e;
+            border: 1px solid #2a2a4a;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            background: #16213e;
+            padding: 0.8rem 1.2rem;
+            font-weight: 600;
+            font-size: 0.95rem;
+            color: #4fc3f7;
+            border-bottom: 1px solid #2a2a4a;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .panel-body {
+            padding: 1.2rem;
+        }
+
+        .panel-body img {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+
+        /* Text result */
+        #extracted-text {
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.9rem;
+            line-height: 1.7;
+            color: #ccd6f6;
+            min-height: 100px;
+        }
+
+        /* Progress */
+        .progress-section {
+            display: none;
+            margin-top: 2rem;
+            text-align: center;
+        }
+
+        .progress-section.active { display: block; }
+
+        .progress-bar-container {
+            background: #16213e;
+            border-radius: 10px;
+            height: 12px;
+            overflow: hidden;
+            margin: 1rem auto;
+            max-width: 500px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4fc3f7, #81c784);
+            border-radius: 10px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-text {
+            color: #8892b0;
+            font-size: 0.9rem;
+            margin-top: 0.5rem;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #3a3a5c;
+            border-top-color: #4fc3f7;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 0.5rem;
+            vertical-align: middle;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Errors section */
+        .errors-section {
+            display: none;
+            margin-top: 2rem;
+        }
+
+        .errors-section.active { display: block; }
+
+        .errors-summary {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .stat-card {
+            background: #1a1a2e;
+            border: 1px solid #2a2a4a;
+            border-radius: 10px;
+            padding: 1rem 1.5rem;
+            flex: 1;
+            min-width: 140px;
+            text-align: center;
+        }
+
+        .stat-card .number {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .stat-card .label {
+            font-size: 0.8rem;
+            color: #8892b0;
+            margin-top: 0.3rem;
+        }
+
+        .stat-card.errors .number { color: #ef5350; }
+        .stat-card.warnings .number { color: #ffa726; }
+        .stat-card.ok .number { color: #81c784; }
+
+        .error-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.8rem;
+        }
+
+        .error-item {
+            background: #1a1a2e;
+            border-left: 4px solid #ef5350;
+            border-radius: 0 10px 10px 0;
+            padding: 1rem 1.2rem;
+        }
+
+        .error-item.warning {
+            border-left-color: #ffa726;
+        }
+
+        .error-item .error-context {
+            font-family: 'Consolas', monospace;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .error-item .error-word {
+            color: #ef5350;
+            text-decoration: underline wavy;
+            font-weight: 600;
+        }
+
+        .error-item.warning .error-word {
+            color: #ffa726;
+        }
+
+        .error-item .error-message {
+            color: #8892b0;
+            font-size: 0.85rem;
+            margin-bottom: 0.4rem;
+        }
+
+        .error-item .error-suggestion {
+            color: #81c784;
+            font-size: 0.85rem;
+        }
+
+        .error-item .error-suggestion span {
+            background: #1e3a2a;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            margin-left: 0.3rem;
+            font-family: 'Consolas', monospace;
+        }
+
+        /* Highlighted text */
+        .highlight-error {
+            background: rgba(239, 83, 80, 0.2);
+            color: #ef5350;
+            text-decoration: underline wavy #ef5350;
+            padding: 0 2px;
+            border-radius: 2px;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .highlight-warning {
+            background: rgba(255, 167, 38, 0.15);
+            color: #ffa726;
+            text-decoration: underline wavy #ffa726;
+            padding: 0 2px;
+            border-radius: 2px;
+            cursor: pointer;
+        }
+
+        /* Buttons */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.7rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4fc3f7, #29b6f6);
+            color: #0f0f1a;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 15px rgba(79, 195, 247, 0.3);
+        }
+
+        .btn-secondary {
+            background: #2a2a4a;
+            color: #ccd6f6;
+        }
+
+        .btn-secondary:hover {
+            background: #3a3a5c;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .actions {
+            display: flex;
+            gap: 0.8rem;
+            margin-top: 1.5rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        /* No errors state */
+        .no-errors {
+            text-align: center;
+            padding: 2rem;
+            color: #81c784;
+        }
+
+        .no-errors .check-icon {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            color: #4a4a6a;
+            font-size: 0.8rem;
+            margin-top: 3rem;
+        }
+
+        .footer a { color: #4fc3f7; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>&#128269; OCR Detector de Errores</h1>
+        <p>Sube una imagen con texto &rarr; extrae el contenido &rarr; detecta errores ortogr&aacute;ficos y gramaticales</p>
+    </div>
+
+    <div class="container">
+        <!-- Upload -->
+        <div class="upload-zone" id="upload-zone">
+            <input type="file" id="file-input" accept="image/*">
+            <div class="upload-icon">&#128444;&#65039;</div>
+            <h2>Arrastra una imagen aqu&iacute; o haz clic para seleccionar</h2>
+            <p>Formatos: PNG, JPG, JPEG, BMP, WebP</p>
+
+            <div class="options-bar">
+                <label for="lang-select">Idioma del texto:</label>
+                <select id="lang-select">
+                    <option value="spa" selected>Espa&ntilde;ol</option>
+                    <option value="eng">Ingl&eacute;s</option>
+                    <option value="fra">Franc&eacute;s</option>
+                    <option value="por">Portugu&eacute;s</option>
+                    <option value="spa+eng">Espa&ntilde;ol + Ingl&eacute;s</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Progress -->
+        <div class="progress-section" id="progress-section">
+            <div class="spinner"></div>
+            <span class="progress-text" id="progress-text">Inicializando OCR...</span>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+        </div>
+
+        <!-- Preview -->
+        <div class="preview-section" id="preview-section">
+            <div class="preview-container">
+                <div class="panel">
+                    <div class="panel-header">&#128247; Imagen original</div>
+                    <div class="panel-body">
+                        <img id="preview-img" src="" alt="Preview">
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header">&#128196; Texto extra&iacute;do</div>
+                    <div class="panel-body">
+                        <div id="extracted-text"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button class="btn btn-primary" id="btn-analyze" disabled>
+                    &#128300; Analizar errores
+                </button>
+                <button class="btn btn-secondary" id="btn-copy">
+                    &#128203; Copiar texto
+                </button>
+                <button class="btn btn-secondary" id="btn-reset">
+                    &#128260; Nueva imagen
+                </button>
+            </div>
+        </div>
+
+        <!-- Errors -->
+        <div class="errors-section" id="errors-section">
+            <div class="errors-summary" id="errors-summary"></div>
+            <div class="error-list" id="error-list"></div>
+        </div>
+    </div>
+
+    <div class="footer">
+        Hecho por <a href="https://github.com/jbenavides-dotcom">Jhonatan Benavides</a> &mdash;
+        OCR: Tesseract.js &bull; Gram&aacute;tica: LanguageTool API
+    </div>
+
+    <script>
+        const uploadZone = document.getElementById('upload-zone');
+        const fileInput = document.getElementById('file-input');
+        const previewSection = document.getElementById('preview-section');
+        const progressSection = document.getElementById('progress-section');
+        const errorsSection = document.getElementById('errors-section');
+        const previewImg = document.getElementById('preview-img');
+        const extractedText = document.getElementById('extracted-text');
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const btnAnalyze = document.getElementById('btn-analyze');
+        const btnCopy = document.getElementById('btn-copy');
+        const btnReset = document.getElementById('btn-reset');
+        const langSelect = document.getElementById('lang-select');
+
+        let currentText = '';
+
+        // Language mapping for LanguageTool
+        const ltLangMap = {
+            'spa': 'es',
+            'eng': 'en-US',
+            'fra': 'fr',
+            'por': 'pt-BR',
+            'spa+eng': 'es'
+        };
+
+        // Drag & drop
+        ['dragenter', 'dragover'].forEach(e => {
+            uploadZone.addEventListener(e, (ev) => {
+                ev.preventDefault();
+                uploadZone.classList.add('dragover');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(e => {
+            uploadZone.addEventListener(e, (ev) => {
+                ev.preventDefault();
+                uploadZone.classList.remove('dragover');
+            });
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+            const file = e.dataTransfer.files[0];
+            if (file && file.type.startsWith('image/')) {
+                processImage(file);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) processImage(file);
+        });
+
+        async function processImage(file) {
+            // Show preview
+            const url = URL.createObjectURL(file);
+            previewImg.src = url;
+            previewSection.classList.add('active');
+            progressSection.classList.add('active');
+            errorsSection.classList.remove('active');
+            uploadZone.style.display = 'none';
+            btnAnalyze.disabled = true;
+            extractedText.textContent = '';
+
+            const lang = langSelect.value;
+
+            try {
+                const result = await Tesseract.recognize(file, lang, {
+                    logger: (info) => {
+                        if (info.status === 'recognizing text') {
+                            const pct = Math.round(info.progress * 100);
+                            progressBar.style.width = pct + '%';
+                            progressText.textContent = `Reconociendo texto... ${pct}%`;
+                        } else {
+                            progressText.textContent = info.status === 'loading language traineddata'
+                                ? 'Descargando datos del idioma...'
+                                : info.status;
+                        }
+                    }
+                });
+
+                currentText = result.data.text.trim();
+
+                if (!currentText) {
+                    extractedText.innerHTML = '<em style="color:#6b7280;">No se pudo extraer texto de la imagen. Intenta con una imagen más clara.</em>';
+                } else {
+                    extractedText.textContent = currentText;
+                    btnAnalyze.disabled = false;
+                }
+            } catch (err) {
+                extractedText.innerHTML = `<em style="color:#ef5350;">Error: ${err.message}</em>`;
+            }
+
+            progressSection.classList.remove('active');
+            progressBar.style.width = '0%';
+        }
+
+        // Analyze errors
+        btnAnalyze.addEventListener('click', analyzeErrors);
+
+        async function analyzeErrors() {
+            if (!currentText) return;
+
+            btnAnalyze.disabled = true;
+            btnAnalyze.innerHTML = '<span class="spinner"></span> Analizando...';
+
+            const ocrLang = langSelect.value.split('+')[0];
+            const ltLang = ltLangMap[langSelect.value] || 'es';
+
+            try {
+                const response = await fetch('https://api.languagetool.org/v2/check', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        text: currentText,
+                        language: ltLang,
+                        enabledOnly: 'false'
+                    })
+                });
+
+                if (!response.ok) throw new Error('Error al conectar con LanguageTool');
+
+                const data = await response.json();
+                displayErrors(data.matches);
+            } catch (err) {
+                document.getElementById('error-list').innerHTML =
+                    `<div style="color:#ef5350;text-align:center;padding:1rem;">
+                        Error al analizar: ${err.message}<br>
+                        <small style="color:#8892b0;">Verifica tu conexi&oacute;n a internet</small>
+                    </div>`;
+                errorsSection.classList.add('active');
+            }
+
+            btnAnalyze.disabled = false;
+            btnAnalyze.innerHTML = '&#128300; Analizar errores';
+        }
+
+        function displayErrors(matches) {
+            const errorsContainer = document.getElementById('error-list');
+            const summaryContainer = document.getElementById('errors-summary');
+            errorsSection.classList.add('active');
+
+            // Classify
+            const spelling = matches.filter(m => m.rule.issueType === 'misspelling');
+            const grammar = matches.filter(m => m.rule.issueType !== 'misspelling');
+
+            // Summary cards
+            summaryContainer.innerHTML = `
+                <div class="stat-card ${matches.length > 0 ? 'errors' : 'ok'}">
+                    <div class="number">${matches.length}</div>
+                    <div class="label">Total problemas</div>
+                </div>
+                <div class="stat-card errors">
+                    <div class="number">${spelling.length}</div>
+                    <div class="label">Ortograf&iacute;a</div>
+                </div>
+                <div class="stat-card warnings">
+                    <div class="number">${grammar.length}</div>
+                    <div class="label">Gram&aacute;tica / Estilo</div>
+                </div>
+            `;
+
+            if (matches.length === 0) {
+                errorsContainer.innerHTML = `
+                    <div class="no-errors">
+                        <div class="check-icon">&#9989;</div>
+                        <h3>No se encontraron errores</h3>
+                        <p style="color:#8892b0;margin-top:0.5rem;">El texto parece estar correcto</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Highlight text
+            highlightErrors(matches);
+
+            // Error list
+            errorsContainer.innerHTML = matches.map((m, i) => {
+                const isSpelling = m.rule.issueType === 'misspelling';
+                const word = currentText.substring(m.offset, m.offset + m.length);
+                const contextBefore = currentText.substring(Math.max(0, m.offset - 20), m.offset);
+                const contextAfter = currentText.substring(m.offset + m.length, Math.min(currentText.length, m.offset + m.length + 20));
+                const suggestions = m.replacements.slice(0, 3).map(r => r.value);
+
+                return `
+                    <div class="error-item ${isSpelling ? '' : 'warning'}">
+                        <div class="error-context">
+                            ...${escapeHtml(contextBefore)}<span class="error-word">${escapeHtml(word)}</span>${escapeHtml(contextAfter)}...
+                        </div>
+                        <div class="error-message">
+                            ${isSpelling ? '&#10060;' : '&#9888;&#65039;'} ${escapeHtml(m.message)}
+                        </div>
+                        ${suggestions.length > 0 ? `
+                            <div class="error-suggestion">
+                                &#128161; Sugerencias: ${suggestions.map(s => `<span>${escapeHtml(s)}</span>`).join(' ')}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function highlightErrors(matches) {
+            // Sort by offset descending to replace from end to start
+            const sorted = [...matches].sort((a, b) => b.offset - a.offset);
+            let html = escapeHtml(currentText);
+
+            // We need to work with the escaped text, recalculate offsets
+            let raw = currentText;
+            let highlighted = raw;
+
+            for (const m of sorted) {
+                const before = highlighted.substring(0, m.offset);
+                const word = highlighted.substring(m.offset, m.offset + m.length);
+                const after = highlighted.substring(m.offset + m.length);
+                const cls = m.rule.issueType === 'misspelling' ? 'highlight-error' : 'highlight-warning';
+                highlighted = before + `<mark class="${cls}" title="${escapeAttr(m.message)}">${escapeHtml(word)}</mark>` + after;
+            }
+
+            // Fix: re-escape parts that aren't inside <mark> tags
+            const parts = highlighted.split(/(<mark[^>]*>.*?<\/mark>)/g);
+            const finalHtml = parts.map(part => {
+                if (part.startsWith('<mark')) return part;
+                return escapeHtml(part);
+            }).join('');
+
+            extractedText.innerHTML = finalHtml;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function escapeAttr(text) {
+            return text.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // Copy text
+        btnCopy.addEventListener('click', () => {
+            navigator.clipboard.writeText(currentText).then(() => {
+                btnCopy.innerHTML = '&#9989; Copiado!';
+                setTimeout(() => { btnCopy.innerHTML = '&#128203; Copiar texto'; }, 2000);
+            });
+        });
+
+        // Reset
+        btnReset.addEventListener('click', () => {
+            previewSection.classList.remove('active');
+            errorsSection.classList.remove('active');
+            uploadZone.style.display = '';
+            fileInput.value = '';
+            currentText = '';
+            extractedText.textContent = '';
+        });
+    </script>
+</body>
+</html>
