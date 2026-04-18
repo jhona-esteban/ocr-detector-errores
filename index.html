@@ -435,17 +435,6 @@
 
         </div>
 
-        <div class="options-bar">
-            <label for="lang-select">Idioma del texto:</label>
-            <select id="lang-select">
-                <option value="spa" selected>Espa&ntilde;ol</option>
-                <option value="eng">Ingl&eacute;s</option>
-                <option value="fra">Franc&eacute;s</option>
-                <option value="por">Portugu&eacute;s</option>
-                <option value="spa+eng">Espa&ntilde;ol + Ingl&eacute;s</option>
-            </select>
-        </div>
-
         <!-- Progress -->
         <div class="progress-section" id="progress-section">
             <div class="spinner"></div>
@@ -517,17 +506,32 @@
         const btnAnalyze = document.getElementById('btn-analyze');
         const btnCopy = document.getElementById('btn-copy');
         const btnReset = document.getElementById('btn-reset');
-        const langSelect = document.getElementById('lang-select');
+
+        const TESSERACT_LANG = 'fra';
+        const LT_LANG = 'fr';
 
         let currentText = '';
 
-        const ltLangMap = {
-            'spa': 'es',
-            'eng': 'en-US',
-            'fra': 'fr',
-            'por': 'pt-BR',
-            'spa+eng': 'es'
-        };
+        // Shared Tesseract worker (creado una sola vez)
+        let tessWorker = null;
+
+        async function getWorker(onProgress) {
+            if (tessWorker) return tessWorker;
+            tessWorker = await Tesseract.createWorker(TESSERACT_LANG, 1, {
+                logger: (m) => onProgress?.(m)
+            });
+            // PSM 6 = SINGLE_BLOCK (bloque uniforme) — mejor para manuscrito segun guia
+            await tessWorker.setParameters({
+                tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK
+            });
+            return tessWorker;
+        }
+
+        async function tesseractOCR(source, onProgress) {
+            const worker = await getWorker(onProgress);
+            const { data } = await worker.recognize(source);
+            return (data.text || '').trim();
+        }
 
         // Drag & drop
         ['dragenter', 'dragover'].forEach(e => {
@@ -577,24 +581,19 @@
             btnAnalyze.disabled = true;
             extractedText.textContent = '';
 
-            const lang = langSelect.value;
-
             try {
-                const result = await Tesseract.recognize(file, lang, {
-                    logger: (info) => {
-                        if (info.status === 'recognizing text') {
-                            const pct = Math.round(info.progress * 100);
-                            progressBar.style.width = pct + '%';
-                            progressText.textContent = `Reconociendo texto... ${pct}%`;
-                        } else {
-                            progressText.textContent = info.status === 'loading language traineddata'
-                                ? 'Descargando datos del idioma...'
-                                : info.status;
-                        }
+                const text = await tesseractOCR(file, (info) => {
+                    if (info.status === 'recognizing text') {
+                        const pct = Math.round(info.progress * 100);
+                        progressBar.style.width = pct + '%';
+                        progressText.textContent = `Reconociendo texto... ${pct}%`;
+                    } else if (info.status === 'loading language traineddata') {
+                        progressText.textContent = 'Descargando datos del idioma franc\u00e9s...';
+                    } else {
+                        progressText.textContent = info.status;
                     }
                 });
-
-                currentText = result.data.text.trim();
+                currentText = text;
                 showExtractedText();
             } catch (err) {
                 extractedText.innerHTML = `<em style="color:#ef5350;">Error: ${err.message}</em>`;
@@ -617,8 +616,6 @@
             extractedText.textContent = '';
             currentText = '';
 
-            const lang = langSelect.value;
-
             try {
                 const arrayBuffer = await file.arrayBuffer();
                 const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -637,22 +634,17 @@
                     }
                 }
 
-                // Render pages as preview canvases and do OCR if needed
-                const pageImages = [];
+                let allText = '';
 
                 for (let i = 1; i <= totalPages; i++) {
                     const page = await pdf.getPage(i);
-                    const scale = 2; // High res for OCR
-                    const viewport = page.getViewport({ scale });
 
-                    // Preview canvas (smaller)
+                    // Preview canvas (smaller, for UI)
                     const previewCanvas = document.createElement('canvas');
-                    const previewScale = 1;
-                    const previewViewport = page.getViewport({ scale: previewScale });
+                    const previewViewport = page.getViewport({ scale: 1 });
                     previewCanvas.width = previewViewport.width;
                     previewCanvas.height = previewViewport.height;
-                    const previewCtx = previewCanvas.getContext('2d');
-                    await page.render({ canvasContext: previewCtx, viewport: previewViewport }).promise;
+                    await page.render({ canvasContext: previewCanvas.getContext('2d'), viewport: previewViewport }).promise;
 
                     const label = document.createElement('div');
                     label.className = 'page-label';
@@ -660,73 +652,39 @@
                     pdfPreview.appendChild(previewCanvas);
                     pdfPreview.appendChild(label);
 
-                    // High-res canvas for OCR (scale 4 ≈ 300 DPI)
                     if (!directText) {
-                        const ocrScale = 4;
-                        const ocrViewport = page.getViewport({ scale: ocrScale });
+                        progressText.textContent = `OCR p\u00e1gina ${i} de ${totalPages}...`;
+
+                        // Scale 2 segun guia (mejor para manuscrito que scale 4 con binarizacion)
+                        const ocrViewport = page.getViewport({ scale: 2 });
                         const ocrCanvas = document.createElement('canvas');
                         ocrCanvas.width = ocrViewport.width;
                         ocrCanvas.height = ocrViewport.height;
-                        const ocrCtx = ocrCanvas.getContext('2d');
-                        await page.render({ canvasContext: ocrCtx, viewport: ocrViewport }).promise;
+                        await page.render({ canvasContext: ocrCanvas.getContext('2d'), viewport: ocrViewport }).promise;
 
-                        // Preprocess: convert to grayscale + increase contrast
-                        const imgData = ocrCtx.getImageData(0, 0, ocrCanvas.width, ocrCanvas.height);
-                        const data = imgData.data;
-                        for (let j = 0; j < data.length; j += 4) {
-                            const gray = data[j] * 0.299 + data[j+1] * 0.587 + data[j+2] * 0.114;
-                            const val = gray > 160 ? 255 : 0; // binarize
-                            data[j] = data[j+1] = data[j+2] = val;
-                        }
-                        ocrCtx.putImageData(imgData, 0, 0);
-
-                        pageImages.push({ canvas: ocrCanvas, pageNum: i });
-                    }
-                }
-
-                if (directText) {
-                    // PDF has selectable text
-                    currentText = directText;
-                    showExtractedText();
-                    progressSection.classList.remove('active');
-                    progressBar.style.width = '0%';
-                } else {
-                    // Scanned PDF - need OCR on each page
-                    let allText = '';
-
-                    for (let i = 0; i < pageImages.length; i++) {
-                        const { canvas, pageNum } = pageImages[i];
-                        progressText.textContent = `OCR p\u00e1gina ${pageNum} de ${totalPages}...`;
-
-                        const result = await Tesseract.recognize(canvas, lang, {
-                            logger: (info) => {
-                                if (info.status === 'recognizing text') {
-                                    const pageProgress = (i + info.progress) / totalPages;
-                                    const pct = Math.round(pageProgress * 100);
-                                    progressBar.style.width = pct + '%';
-                                    progressText.textContent = `OCR p\u00e1gina ${pageNum}/${totalPages}... ${Math.round(info.progress * 100)}%`;
-                                } else if (info.status === 'loading language traineddata') {
-                                    progressText.textContent = 'Descargando datos del idioma...';
-                                }
+                        // Sin binarizacion: Tesseract trabaja mejor con imagen en color/gris natural
+                        const pageText = await tesseractOCR(ocrCanvas, (info) => {
+                            if (info.status === 'recognizing text') {
+                                const pagePct = ((i - 1) + info.progress) / totalPages;
+                                progressBar.style.width = Math.round(pagePct * 100) + '%';
+                                progressText.textContent = `OCR p\u00e1gina ${i}/${totalPages}... ${Math.round(info.progress * 100)}%`;
                             }
                         });
-
-                        const pageText = result.data.text.trim();
                         if (pageText) {
-                            allText += (allText ? '\n\n' : '') + `--- P\u00e1gina ${pageNum} ---\n` + pageText;
+                            allText += (allText ? '\n\n' : '') + `--- P\u00e1gina ${i} ---\n` + pageText;
                         }
                     }
-
-                    currentText = allText;
-                    showExtractedText();
-                    progressSection.classList.remove('active');
-                    progressBar.style.width = '0%';
                 }
+
+                currentText = directText || allText;
+                showExtractedText();
 
             } catch (err) {
                 extractedText.innerHTML = `<em style="color:#ef5350;">Error al procesar PDF: ${err.message}</em>`;
-                progressSection.classList.remove('active');
             }
+
+            progressSection.classList.remove('active');
+            progressBar.style.width = '0%';
         }
 
         function showExtractedText() {
@@ -747,7 +705,7 @@
             btnAnalyze.disabled = true;
             btnAnalyze.innerHTML = '<span class="spinner"></span> Analizando...';
 
-            const ltLang = ltLangMap[langSelect.value] || 'es';
+            const ltLang = LT_LANG;
 
             // Clean text: remove page separators for analysis
             const cleanText = currentText.replace(/---\s*P\u00e1gina\s*\d+\s*---\n?/g, '');
