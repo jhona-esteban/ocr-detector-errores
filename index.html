@@ -533,6 +533,47 @@
             return (data.text || '').trim();
         }
 
+        // Preprocesamiento: escala de grises + boost de contraste suave (sin binarizacion)
+        function preprocessCanvas(canvas) {
+            const ctx = canvas.getContext('2d');
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imgData.data;
+
+            const contrast = 1.35; // 1.0 = sin cambio, >1 = mas contraste
+            const intercept = 128 * (1 - contrast);
+
+            for (let i = 0; i < data.length; i += 4) {
+                // Luminosity (mejor que promedio para texto a lapiz)
+                const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+                // Stretch lineal alrededor de 128
+                let v = contrast * gray + intercept;
+                v = v < 0 ? 0 : v > 255 ? 255 : v;
+                data[i] = data[i + 1] = data[i + 2] = v;
+            }
+
+            ctx.putImageData(imgData, 0, 0);
+            return canvas;
+        }
+
+        async function fileToCanvas(file) {
+            const url = URL.createObjectURL(file);
+            try {
+                const img = new Image();
+                await new Promise((resolve, reject) => {
+                    img.onload = resolve;
+                    img.onerror = reject;
+                    img.src = url;
+                });
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth;
+                canvas.height = img.naturalHeight;
+                canvas.getContext('2d').drawImage(img, 0, 0);
+                return canvas;
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+        }
+
         // Drag & drop
         ['dragenter', 'dragover'].forEach(e => {
             uploadZone.addEventListener(e, (ev) => {
@@ -582,7 +623,11 @@
             extractedText.textContent = '';
 
             try {
-                const text = await tesseractOCR(file, (info) => {
+                progressText.textContent = 'Preprocesando imagen...';
+                const rawCanvas = await fileToCanvas(file);
+                const canvas = preprocessCanvas(rawCanvas);
+
+                const text = await tesseractOCR(canvas, (info) => {
                     if (info.status === 'recognizing text') {
                         const pct = Math.round(info.progress * 100);
                         progressBar.style.width = pct + '%';
@@ -653,16 +698,18 @@
                     pdfPreview.appendChild(label);
 
                     if (!directText) {
-                        progressText.textContent = `OCR p\u00e1gina ${i} de ${totalPages}...`;
+                        progressText.textContent = `Preprocesando p\u00e1gina ${i}...`;
 
-                        // Scale 2 segun guia (mejor para manuscrito que scale 4 con binarizacion)
-                        const ocrViewport = page.getViewport({ scale: 2 });
+                        // Scale 3 para mas detalle en manuscrito (antes 2)
+                        const ocrViewport = page.getViewport({ scale: 3 });
                         const ocrCanvas = document.createElement('canvas');
                         ocrCanvas.width = ocrViewport.width;
                         ocrCanvas.height = ocrViewport.height;
                         await page.render({ canvasContext: ocrCanvas.getContext('2d'), viewport: ocrViewport }).promise;
 
-                        // Sin binarizacion: Tesseract trabaja mejor con imagen en color/gris natural
+                        // Escala de grises + boost de contraste suave (sin binarizacion)
+                        preprocessCanvas(ocrCanvas);
+
                         const pageText = await tesseractOCR(ocrCanvas, (info) => {
                             if (info.status === 'recognizing text') {
                                 const pagePct = ((i - 1) + info.progress) / totalPages;
