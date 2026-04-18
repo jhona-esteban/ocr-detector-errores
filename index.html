@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>OCR Detector de Errores</title>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -36,7 +37,7 @@
         }
 
         .container {
-            max-width: 1000px;
+            max-width: 1100px;
             margin: 0 auto;
             padding: 2rem 1.5rem;
         }
@@ -148,11 +149,35 @@
 
         .panel-body {
             padding: 1.2rem;
+            max-height: 600px;
+            overflow-y: auto;
         }
 
-        .panel-body img {
+        .panel-body img, .panel-body canvas {
             max-width: 100%;
             border-radius: 8px;
+            display: block;
+        }
+
+        /* PDF pages in preview */
+        .pdf-pages {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .pdf-pages canvas {
+            width: 100%;
+            border: 1px solid #2a2a4a;
+            border-radius: 8px;
+        }
+
+        .page-label {
+            text-align: center;
+            color: #8892b0;
+            font-size: 0.8rem;
+            margin-top: 0.3rem;
+            margin-bottom: 0.5rem;
         }
 
         /* Text result */
@@ -312,7 +337,6 @@
             padding: 0 2px;
             border-radius: 2px;
             cursor: pointer;
-            position: relative;
         }
 
         .highlight-warning {
@@ -398,16 +422,16 @@
 <body>
     <div class="header">
         <h1>&#128269; OCR Detector de Errores</h1>
-        <p>Sube una imagen con texto &rarr; extrae el contenido &rarr; detecta errores ortogr&aacute;ficos y gramaticales</p>
+        <p>Sube una imagen o PDF con texto &rarr; extrae el contenido &rarr; detecta errores ortogr&aacute;ficos y gramaticales</p>
     </div>
 
     <div class="container">
         <!-- Upload -->
         <div class="upload-zone" id="upload-zone">
-            <input type="file" id="file-input" accept="image/*">
+            <input type="file" id="file-input" accept="image/*,.pdf,application/pdf">
             <div class="upload-icon">&#128444;&#65039;</div>
-            <h2>Arrastra una imagen aqu&iacute; o haz clic para seleccionar</h2>
-            <p>Formatos: PNG, JPG, JPEG, BMP, WebP</p>
+            <h2>Arrastra una imagen o PDF aqu&iacute; o haz clic para seleccionar</h2>
+            <p>Formatos: PNG, JPG, JPEG, BMP, WebP, <strong>PDF</strong></p>
 
             <div class="options-bar">
                 <label for="lang-select">Idioma del texto:</label>
@@ -434,9 +458,10 @@
         <div class="preview-section" id="preview-section">
             <div class="preview-container">
                 <div class="panel">
-                    <div class="panel-header">&#128247; Imagen original</div>
-                    <div class="panel-body">
+                    <div class="panel-header" id="preview-header">&#128247; Imagen original</div>
+                    <div class="panel-body" id="preview-body">
                         <img id="preview-img" src="" alt="Preview">
+                        <div id="pdf-preview" class="pdf-pages" style="display:none;"></div>
                     </div>
                 </div>
                 <div class="panel">
@@ -468,17 +493,23 @@
     </div>
 
     <div class="footer">
-        Hecho por <a href="https://github.com/jbenavides-dotcom">Jhonatan Benavides</a> &mdash;
-        OCR: Tesseract.js &bull; Gram&aacute;tica: LanguageTool API
+        Hecho por <a href="https://github.com/jhona-esteban">Jhonatan Benavides</a> &mdash;
+        OCR: Tesseract.js &bull; PDF: PDF.js &bull; Gram&aacute;tica: LanguageTool API
     </div>
 
-    <script>
+    <script type="module">
+        // Load PDF.js
+        const pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+
         const uploadZone = document.getElementById('upload-zone');
         const fileInput = document.getElementById('file-input');
         const previewSection = document.getElementById('preview-section');
         const progressSection = document.getElementById('progress-section');
         const errorsSection = document.getElementById('errors-section');
         const previewImg = document.getElementById('preview-img');
+        const pdfPreview = document.getElementById('pdf-preview');
+        const previewHeader = document.getElementById('preview-header');
         const extractedText = document.getElementById('extracted-text');
         const progressBar = document.getElementById('progress-bar');
         const progressText = document.getElementById('progress-text');
@@ -489,7 +520,6 @@
 
         let currentText = '';
 
-        // Language mapping for LanguageTool
         const ltLangMap = {
             'spa': 'es',
             'eng': 'en-US',
@@ -515,20 +545,30 @@
 
         uploadZone.addEventListener('drop', (e) => {
             const file = e.dataTransfer.files[0];
-            if (file && file.type.startsWith('image/')) {
-                processImage(file);
-            }
+            if (file) handleFile(file);
         });
 
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
-            if (file) processImage(file);
+            if (file) handleFile(file);
         });
 
+        function handleFile(file) {
+            if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+                processPDF(file);
+            } else if (file.type.startsWith('image/')) {
+                processImage(file);
+            } else {
+                alert('Formato no soportado. Usa una imagen (PNG, JPG) o un PDF.');
+            }
+        }
+
         async function processImage(file) {
-            // Show preview
             const url = URL.createObjectURL(file);
             previewImg.src = url;
+            previewImg.style.display = 'block';
+            pdfPreview.style.display = 'none';
+            previewHeader.innerHTML = '&#128247; Imagen original';
             previewSection.classList.add('active');
             progressSection.classList.add('active');
             errorsSection.classList.remove('active');
@@ -554,19 +594,134 @@
                 });
 
                 currentText = result.data.text.trim();
-
-                if (!currentText) {
-                    extractedText.innerHTML = '<em style="color:#6b7280;">No se pudo extraer texto de la imagen. Intenta con una imagen más clara.</em>';
-                } else {
-                    extractedText.textContent = currentText;
-                    btnAnalyze.disabled = false;
-                }
+                showExtractedText();
             } catch (err) {
                 extractedText.innerHTML = `<em style="color:#ef5350;">Error: ${err.message}</em>`;
             }
 
             progressSection.classList.remove('active');
             progressBar.style.width = '0%';
+        }
+
+        async function processPDF(file) {
+            previewImg.style.display = 'none';
+            pdfPreview.style.display = 'flex';
+            pdfPreview.innerHTML = '';
+            previewHeader.innerHTML = '&#128196; PDF original';
+            previewSection.classList.add('active');
+            progressSection.classList.add('active');
+            errorsSection.classList.remove('active');
+            uploadZone.style.display = 'none';
+            btnAnalyze.disabled = true;
+            extractedText.textContent = '';
+            currentText = '';
+
+            const lang = langSelect.value;
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                const totalPages = pdf.numPages;
+
+                progressText.textContent = `PDF cargado: ${totalPages} p\u00e1gina(s). Procesando...`;
+
+                // First try to extract text directly (for text-based PDFs)
+                let directText = '';
+                for (let i = 1; i <= totalPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    const pageText = textContent.items.map(item => item.str).join(' ');
+                    if (pageText.trim()) {
+                        directText += (directText ? '\n\n' : '') + `--- P\u00e1gina ${i} ---\n` + pageText.trim();
+                    }
+                }
+
+                // Render pages as preview canvases and do OCR if needed
+                const pageImages = [];
+
+                for (let i = 1; i <= totalPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const scale = 2; // High res for OCR
+                    const viewport = page.getViewport({ scale });
+
+                    // Preview canvas (smaller)
+                    const previewCanvas = document.createElement('canvas');
+                    const previewScale = 1;
+                    const previewViewport = page.getViewport({ scale: previewScale });
+                    previewCanvas.width = previewViewport.width;
+                    previewCanvas.height = previewViewport.height;
+                    const previewCtx = previewCanvas.getContext('2d');
+                    await page.render({ canvasContext: previewCtx, viewport: previewViewport }).promise;
+
+                    const label = document.createElement('div');
+                    label.className = 'page-label';
+                    label.textContent = `P\u00e1gina ${i} de ${totalPages}`;
+                    pdfPreview.appendChild(previewCanvas);
+                    pdfPreview.appendChild(label);
+
+                    // High-res canvas for OCR
+                    if (!directText) {
+                        const ocrCanvas = document.createElement('canvas');
+                        ocrCanvas.width = viewport.width;
+                        ocrCanvas.height = viewport.height;
+                        const ocrCtx = ocrCanvas.getContext('2d');
+                        await page.render({ canvasContext: ocrCtx, viewport }).promise;
+                        pageImages.push({ canvas: ocrCanvas, pageNum: i });
+                    }
+                }
+
+                if (directText) {
+                    // PDF has selectable text
+                    currentText = directText;
+                    showExtractedText();
+                    progressSection.classList.remove('active');
+                    progressBar.style.width = '0%';
+                } else {
+                    // Scanned PDF - need OCR on each page
+                    let allText = '';
+
+                    for (let i = 0; i < pageImages.length; i++) {
+                        const { canvas, pageNum } = pageImages[i];
+                        progressText.textContent = `OCR p\u00e1gina ${pageNum} de ${totalPages}...`;
+
+                        const result = await Tesseract.recognize(canvas, lang, {
+                            logger: (info) => {
+                                if (info.status === 'recognizing text') {
+                                    const pageProgress = (i + info.progress) / totalPages;
+                                    const pct = Math.round(pageProgress * 100);
+                                    progressBar.style.width = pct + '%';
+                                    progressText.textContent = `OCR p\u00e1gina ${pageNum}/${totalPages}... ${Math.round(info.progress * 100)}%`;
+                                } else if (info.status === 'loading language traineddata') {
+                                    progressText.textContent = 'Descargando datos del idioma...';
+                                }
+                            }
+                        });
+
+                        const pageText = result.data.text.trim();
+                        if (pageText) {
+                            allText += (allText ? '\n\n' : '') + `--- P\u00e1gina ${pageNum} ---\n` + pageText;
+                        }
+                    }
+
+                    currentText = allText;
+                    showExtractedText();
+                    progressSection.classList.remove('active');
+                    progressBar.style.width = '0%';
+                }
+
+            } catch (err) {
+                extractedText.innerHTML = `<em style="color:#ef5350;">Error al procesar PDF: ${err.message}</em>`;
+                progressSection.classList.remove('active');
+            }
+        }
+
+        function showExtractedText() {
+            if (!currentText) {
+                extractedText.innerHTML = '<em style="color:#6b7280;">No se pudo extraer texto. Intenta con un archivo m\u00e1s claro.</em>';
+            } else {
+                extractedText.textContent = currentText;
+                btnAnalyze.disabled = false;
+            }
         }
 
         // Analyze errors
@@ -578,15 +733,17 @@
             btnAnalyze.disabled = true;
             btnAnalyze.innerHTML = '<span class="spinner"></span> Analizando...';
 
-            const ocrLang = langSelect.value.split('+')[0];
             const ltLang = ltLangMap[langSelect.value] || 'es';
+
+            // Clean text: remove page separators for analysis
+            const cleanText = currentText.replace(/---\s*P\u00e1gina\s*\d+\s*---\n?/g, '');
 
             try {
                 const response = await fetch('https://api.languagetool.org/v2/check', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: new URLSearchParams({
-                        text: currentText,
+                        text: cleanText,
                         language: ltLang,
                         enabledOnly: 'false'
                     })
@@ -595,7 +752,7 @@
                 if (!response.ok) throw new Error('Error al conectar con LanguageTool');
 
                 const data = await response.json();
-                displayErrors(data.matches);
+                displayErrors(data.matches, cleanText);
             } catch (err) {
                 document.getElementById('error-list').innerHTML =
                     `<div style="color:#ef5350;text-align:center;padding:1rem;">
@@ -609,16 +766,14 @@
             btnAnalyze.innerHTML = '&#128300; Analizar errores';
         }
 
-        function displayErrors(matches) {
+        function displayErrors(matches, textForAnalysis) {
             const errorsContainer = document.getElementById('error-list');
             const summaryContainer = document.getElementById('errors-summary');
             errorsSection.classList.add('active');
 
-            // Classify
             const spelling = matches.filter(m => m.rule.issueType === 'misspelling');
             const grammar = matches.filter(m => m.rule.issueType !== 'misspelling');
 
-            // Summary cards
             summaryContainer.innerHTML = `
                 <div class="stat-card ${matches.length > 0 ? 'errors' : 'ok'}">
                     <div class="number">${matches.length}</div>
@@ -645,15 +800,13 @@
                 return;
             }
 
-            // Highlight text
-            highlightErrors(matches);
+            highlightErrors(matches, textForAnalysis);
 
-            // Error list
-            errorsContainer.innerHTML = matches.map((m, i) => {
+            errorsContainer.innerHTML = matches.map((m) => {
                 const isSpelling = m.rule.issueType === 'misspelling';
-                const word = currentText.substring(m.offset, m.offset + m.length);
-                const contextBefore = currentText.substring(Math.max(0, m.offset - 20), m.offset);
-                const contextAfter = currentText.substring(m.offset + m.length, Math.min(currentText.length, m.offset + m.length + 20));
+                const word = textForAnalysis.substring(m.offset, m.offset + m.length);
+                const contextBefore = textForAnalysis.substring(Math.max(0, m.offset - 20), m.offset);
+                const contextAfter = textForAnalysis.substring(m.offset + m.length, Math.min(textForAnalysis.length, m.offset + m.length + 20));
                 const suggestions = m.replacements.slice(0, 3).map(r => r.value);
 
                 return `
@@ -674,14 +827,9 @@
             }).join('');
         }
 
-        function highlightErrors(matches) {
-            // Sort by offset descending to replace from end to start
+        function highlightErrors(matches, textForAnalysis) {
             const sorted = [...matches].sort((a, b) => b.offset - a.offset);
-            let html = escapeHtml(currentText);
-
-            // We need to work with the escaped text, recalculate offsets
-            let raw = currentText;
-            let highlighted = raw;
+            let highlighted = textForAnalysis;
 
             for (const m of sorted) {
                 const before = highlighted.substring(0, m.offset);
@@ -691,7 +839,6 @@
                 highlighted = before + `<mark class="${cls}" title="${escapeAttr(m.message)}">${escapeHtml(word)}</mark>` + after;
             }
 
-            // Fix: re-escape parts that aren't inside <mark> tags
             const parts = highlighted.split(/(<mark[^>]*>.*?<\/mark>)/g);
             const finalHtml = parts.map(part => {
                 if (part.startsWith('<mark')) return part;
@@ -727,6 +874,7 @@
             fileInput.value = '';
             currentText = '';
             extractedText.textContent = '';
+            pdfPreview.innerHTML = '';
         });
     </script>
 </body>
