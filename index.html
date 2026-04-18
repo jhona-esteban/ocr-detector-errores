@@ -660,13 +660,26 @@
                     pdfPreview.appendChild(previewCanvas);
                     pdfPreview.appendChild(label);
 
-                    // High-res canvas for OCR
+                    // High-res canvas for OCR (scale 4 ≈ 300 DPI)
                     if (!directText) {
+                        const ocrScale = 4;
+                        const ocrViewport = page.getViewport({ scale: ocrScale });
                         const ocrCanvas = document.createElement('canvas');
-                        ocrCanvas.width = viewport.width;
-                        ocrCanvas.height = viewport.height;
+                        ocrCanvas.width = ocrViewport.width;
+                        ocrCanvas.height = ocrViewport.height;
                         const ocrCtx = ocrCanvas.getContext('2d');
-                        await page.render({ canvasContext: ocrCtx, viewport }).promise;
+                        await page.render({ canvasContext: ocrCtx, viewport: ocrViewport }).promise;
+
+                        // Preprocess: convert to grayscale + increase contrast
+                        const imgData = ocrCtx.getImageData(0, 0, ocrCanvas.width, ocrCanvas.height);
+                        const data = imgData.data;
+                        for (let j = 0; j < data.length; j += 4) {
+                            const gray = data[j] * 0.299 + data[j+1] * 0.587 + data[j+2] * 0.114;
+                            const val = gray > 160 ? 255 : 0; // binarize
+                            data[j] = data[j+1] = data[j+2] = val;
+                        }
+                        ocrCtx.putImageData(imgData, 0, 0);
+
                         pageImages.push({ canvas: ocrCanvas, pageNum: i });
                     }
                 }
